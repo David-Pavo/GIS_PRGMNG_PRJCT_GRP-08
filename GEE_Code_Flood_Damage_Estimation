@@ -1,0 +1,290 @@
+//link for the gee code: https://code.earthengine.google.com/7bae8aa2e305099bbe1fdf7e647f5eaf
+//Texas boundary filedenoted by x variable can be accessed at https://code.earthengine.google.com/?asset=projects/ee-sakib2111/assets/Texas_Boundary
+// Memorial Day Flood: Event date:24-25 May, 2015
+// Load Image
+//Change the date to find your flood event. Give a window like at least 7 day for finding image
+
+var image = ee.Image('JRC/GSW1_4/GlobalSurfaceWater');
+var j = ee.ImageCollection("COPERNICUS/S1_GRD")
+                  .filterBounds(x)
+                  .filterDate('2020-09-01', '2020-09-30') //Nearest 7 day from beginning of event
+                  .select('VV');
+
+// show image 
+var j=j.median().clip(x);
+
+Map.centerObject(x,8);
+Map.addLayer(j, {min:-25,max:0},'Memorial Day Sentinel Image');
+ 
+ 
+//histogram
+var histogram =j.select('VV').reduceRegion({
+  reducer: ee.Reducer.histogram(255, 2),
+  geometry: x, 
+  scale: 20,
+  // maxPixels: 1e13,
+  bestEffort: true
+});
+print(histogram);
+//print(Chart.image.histogram(j.select('VV'), x, 20));
+
+
+//ostu's function
+var otsu = function(histogram) {
+  var counts = ee.Array(ee.Dictionary(histogram).get('histogram'));
+  var means = ee.Array(ee.Dictionary(histogram).get('bucketMeans'));
+  var size = means.length().get([0]);
+  var total = counts.reduce(ee.Reducer.sum(), [0]).get([0]);
+  var sum = means.multiply(counts).reduce(ee.Reducer.sum(), [0]).get([0]);
+  var mean = sum.divide(total);
+  
+  var indices = ee.List.sequence(1, size);
+  
+  // Compute between sum of squares, where each mean partitions the data.
+  var bss = indices.map(function(i) {
+    var aCounts = counts.slice(0, 0, i);
+    var aCount = aCounts.reduce(ee.Reducer.sum(), [0]).get([0]);
+    var aMeans = means.slice(0, 0, i);
+    var aMean = aMeans.multiply(aCounts)
+        .reduce(ee.Reducer.sum(), [0]).get([0])
+        .divide(aCount);
+    var bCount = total.subtract(aCount);
+    var bMean = sum.subtract(aCount.multiply(aMean)).divide(bCount);
+    return aCount.multiply(aMean.subtract(mean).pow(2)).add(
+          bCount.multiply(bMean.subtract(mean).pow(2)));
+  });
+  
+  print(ui.Chart.array.values(ee.Array(bss), 0, means));
+  
+  // Return the mean value corresponding to the maximum BSS.
+  return means.sort(bss).get([-1]);
+};
+
+// threshold
+var threshold = otsu(histogram.get('VV'));
+print('threshold', threshold);
+var w = j.select('VV').lt(threshold);
+
+//show flooded area
+var w=w.updateMask(w);
+
+
+// show flooded area with slope mask
+var dataset = ee.ImageCollection('JAXA/ALOS/AW3D30/V3_2');
+var elevation = dataset.select('DSM');
+var proj = elevation.first().select(0).projection();
+var slopeReprojected = ee.Terrain.slope(elevation.mosaic()
+                            .setDefaultProjection(proj));
+var w1 = w.updateMask(slopeReprojected.select('slope').lt(7));
+var occurence=image.select('occurrence').lt(90)
+var w1=w1.updateMask(occurence)
+Map.addLayer(w1,{palette:"Blue"},'Memorial Day flood refined');
+
+// This operation reduces noise of the flood extent product 
+      //var connections = w1.connectedPixelCount();    
+      //var w100 = w1.updateMask(connections.gte(20));
+
+// Area calculation Function
+var calArea=function(image){
+// Calculate flood extent area
+// Create a raster layer containing the area information of each pixel 
+var flood_pixelarea = image.select(polarization)
+  .multiply(ee.Image.pixelArea());
+
+// Sum the areas of flooded pixels
+// default is set to 'bestEffort: true' in order to reduce compuation time, for a more 
+// accurate result set bestEffort to false and increase 'maxPixels'. 
+var flood_stats = flood_pixelarea.reduceRegion({
+  reducer: ee.Reducer.sum(),              
+  geometry: x,
+  scale: 10, // native resolution 
+  //maxPixels: 1e9,
+  bestEffort: true
+  });
+
+// Convert the flood extent to hectares (area calculations are originally given in meters)  
+var flood_area_ha = flood_stats
+  .getNumber(polarization)
+  .divide(1000000)
+  .round(); 
+
+return print('flood_area_ha',flood_area_ha)
+};
+
+//Map.addLayer(w100,{palette:"Blue"},'Memorial Day Inundation');
+ calArea(w);
+ calArea(w1);
+ //calArea(w100);
+
+Export.image.toDrive({
+  image: w1,
+  description: 'Flood_Inundation_Map',
+  scale: 10,
+  region: x,
+  maxPixels: 1e12,
+  fileFormat: 'GeoTIFF'
+});
+// Convert flood raster to polygons
+var Memorialday_inundated = w1.reduceToVectors({
+  scale: 10,
+  geometry: x,
+  geometryType:'polygon',
+  eightConnected: false,
+  bestEffort:true,
+});
+
+// Export flood polygons as shape-file
+Export.table.toDrive({
+  collection:Memorialday_inundated,
+  description:'Memorialday_water',
+  fileFormat:'SHP',
+  fileNamePrefix:'Memorialday_water'
+});
+/*Export.image.toDrive({
+  image: w100,
+  description: 'Memorial Day flood',
+  scale: 10,  // 30 meters per pixel
+  region: x,  // Assuming you have the 'texas' variable from the previous code
+  maxPixels: 1e12,
+  fileFormat: 'GeoTIFF'
+});*/
+
+//------------------------------  DAMAGE ASSSESSMENT  ----------------------------------//
+
+
+//----------------------------- Affected agricultural land ----------------------------//
+
+// using MODIS Land Cover Type Yearly Global 500m
+// filter image collection by the most up-to-date MODIS Land Cover product 
+var LC = ee.ImageCollection('MODIS/061/MCD12Q1')
+  .filterDate('2014-12-01','2023-02-01')
+  .sort('system:index',false)
+  .select("LC_Type1")
+  .first()
+  .clip(x);
+
+// Extract only cropland pixels using the classes cropland (>60%) and Cropland/Natural 
+// Vegetation Mosaics: mosaics of small-scale cultivation 40-60% incl. natural vegetation
+var cropmask = LC
+  .eq(12)
+  .or(LC.eq(14))
+var cropland = LC
+  .updateMask(cropmask)
+Export.image.toDrive({
+  image: cropland,
+  description: 'cropland',
+  scale: 10,
+  region: x,
+  maxPixels: 1e12,
+  fileFormat: 'GeoTIFF'
+});  
+// Convert flood raster to polygons
+var cropland_poly_2015 = cropland.reduceToVectors({
+  scale: 10,
+  geometry: x,
+  geometryType:'polygon',
+  eightConnected: false,
+  bestEffort:true,
+});
+
+// Export flood polygons as shape-file
+Export.table.toDrive({
+  collection:cropland_poly_2015,
+  description:'Cropland_2015',
+  fileFormat:'SHP',
+  fileNamePrefix:'Cropland_2015'
+});
+// get MODIS projection
+var MODISprojection = LC.projection();
+
+// Reproject flood layer to MODIS scale
+var flooded_res = w1
+    .reproject({
+    crs: MODISprojection
+  });
+
+// Calculate affected cropland using the resampled flood layer
+var cropland_affected = flooded_res
+  .updateMask(cropland)
+
+// get pixel area of affected cropland layer
+var crop_pixelarea = cropland_affected
+  .multiply(ee.Image.pixelArea()); //calcuate the area of each pixel 
+
+// sum pixels of affected cropland layer
+var crop_stats = crop_pixelarea.reduceRegion({
+  reducer: ee.Reducer.sum(), //sum all pixels with area information                
+  geometry: x,
+  scale: 500,
+  maxPixels: 1e9,
+  tileScale: 16
+  });
+  
+// convert area to hectares
+var crop_area_ha = crop_stats
+  .getNumber(polarization)
+  .divide(1000000)
+  .round();
+Export.table.toDrive({
+  collection: ee.FeatureCollection([
+    ee.Feature(null, crop_area_ha)
+  ]),
+  description: 'crop_area_ha',
+  fileFormat: 'CSV'
+});
+print('crop_area_ha',crop_area_ha)
+//-------------------------------- Affected urban area ------------------------------//
+
+// Using the same MODIS Land Cover Product 
+// Filter urban areas
+var urbanmask = LC.eq(13)
+var urban = LC
+  .updateMask(urbanmask)
+// Convert flood raster to polygons
+var urban_poly_2015 = urban.reduceToVectors({
+  scale: 10,
+  geometry: x,
+  geometryType:'polygon',
+  eightConnected: false,
+  bestEffort:true,
+});
+
+// Export flood polygons as shape-file
+Export.table.toDrive({
+  collection:urban_poly_2015,
+  description:'Urban_2015',
+  fileFormat:'SHP',
+  fileNamePrefix:'Urban_2015'
+});
+//Calculate affected urban areas using the resampled flood layer
+var urban_affected = urban
+  .mask(flooded_res)
+  .updateMask(urban);
+
+// get pixel area of affected urban layer
+var urban_pixelarea = urban_affected
+  .multiply(ee.Image.pixelArea()); //calcuate the area of each pixel 
+
+// sum pixels of affected cropland layer
+var urban_stats = urban_pixelarea.reduceRegion({
+  reducer: ee.Reducer.sum(), //sum all pixels with area information                
+  geometry: x,
+  scale: 500,
+  bestEffort: true,
+  tileScale: 16
+  });
+
+// convert area to hectares
+var urban_area_ha = urban_stats
+  .getNumber('LC_Type1')
+  .divide(1000000)
+  .round();
+Export.table.toDrive({
+  collection: ee.FeatureCollection([
+    ee.Feature(null, urban_area_ha)
+  ]),
+  description: 'urban_area_ha',
+  fileFormat: 'CSV'
+});
+
+print('urban_area_ha',urban_area_ha)
