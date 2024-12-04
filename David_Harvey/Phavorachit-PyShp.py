@@ -54,18 +54,22 @@ def plot_shapefile(ax, shapefile_path, color, label=None):
 # Create plot
 fig, ax = plt.subplots(figsize=(10, 8))
 
+# define colors for ease of change
+urban_color = "#00008B" # Dark Blue 
+cropland_color = "#FFFF00" # Bright Yellow 
+floodwater_color = "#00FFFF" # cyan
 # Plot each shapefile with different colors
-plot_shapefile(ax, Harvey_Water, color='blue')
-plot_shapefile(ax, Urban15, color='green')
-plot_shapefile(ax, Cropland15, color='red')
+plot_shapefile(ax, Harvey_Water, color=floodwater_color)
+plot_shapefile(ax, Urban15, color=urban_color)
+plot_shapefile(ax, Cropland15, color=cropland_color)
 # plot_shapefile(ax, Harvey_Urban_Intersection, color='cyan')
 # plot_shapefile(ax, Harvey_Cropland_Intersection, color='magenta')
 
 # Add legend with labels
 handles = [
-    plt.Line2D([0], [0], color='blue', lw=1, label='Harvey Water'),
-    plt.Line2D([0], [0], color='green', lw=1, label='2015 Urban Land Coverage'),
-    plt.Line2D([0], [0], color='red', lw=1, label='2015 Cropland Coverage'),
+    plt.Line2D([0], [0], color= floodwater_color, lw=1, label='Harvey Water'),
+    plt.Line2D([0], [0], color=urban_color, lw=1, label='2015 Urban Land Coverage'),
+    plt.Line2D([0], [0], color=cropland_color, lw=1, label='2015 Cropland Coverage'),
     # plt.Line2D([0], [0], color='cyan', lw=1, label='Harvey Water & Urban Land Intersection'),
     # plt.Line2D([0], [0], color='magenta', lw=1, label='Harvey Water & Cropland Intersection')
 ]
@@ -80,6 +84,22 @@ ax.set_ylabel("Latitude")
 
 # Add gridlines
 ax.grid(True)
+
+# Set background color
+fig.patch.set_facecolor('darkgray')
+ax.set_facecolor('darkgray')
+
+# set text color
+ax.xaxis.label.set_color('white')
+ax.yaxis.label.set_color('white') 
+ax.title.set_color('white') 
+
+# Set tick color 
+ax.tick_params(axis='x', colors='white') 
+ax.tick_params(axis='y', colors='white') 
+
+# Set grid color 
+ax.grid(color='white')
 
 saveFile = True # False= preview, True = save each preview to overrite the last with same name
 
